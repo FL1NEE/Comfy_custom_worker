@@ -115,7 +115,7 @@ WORKDIR /comfyui
 
 # Make comfy-node-install available before installing nodes
 COPY scripts/comfy-node-install.sh /usr/local/bin/comfy-node-install
-RUN chmod +x /usr/local/bin/comfy-node-install
+RUN sed -i 's/\r$//' /usr/local/bin/comfy-node-install && chmod +x /usr/local/bin/comfy-node-install
 
 # Mandatory install of required custom nodes via comfy-cli (using registry names)
 # See https://registry.comfy.org/ for correct node names
@@ -249,14 +249,14 @@ RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/root/.c
 
 # Add application code and scripts
 ADD src/start.sh src/optimize_pytorch.py handler.py test_input.json ./
-RUN chmod +x /start.sh && chmod +x /optimize_pytorch.py
+RUN sed -i 's/\r$//' /start.sh && chmod +x /start.sh && chmod +x /optimize_pytorch.py
 
 # Prevent pip from asking for confirmation during uninstall steps in custom nodes
 ENV PIP_NO_INPUT=1
 
 # Copy helper script to switch Manager network mode at container start
 COPY scripts/comfy-manager-set-mode.sh /usr/local/bin/comfy-manager-set-mode
-RUN chmod +x /usr/local/bin/comfy-manager-set-mode
+RUN sed -i 's/\r$//' /usr/local/bin/comfy-manager-set-mode && chmod +x /usr/local/bin/comfy-manager-set-mode
 
 # Stage 2: Download models
 FROM base AS downloader
