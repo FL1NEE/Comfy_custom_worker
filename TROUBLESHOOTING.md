@@ -71,5 +71,4 @@ python3 -c "import torch; print('CUDA device:', torch.cuda.get_device_name(0) if
 
 - **Базовый образ:** `nvidia/cuda:12.8.0-cudnn-devel-ubuntu24.04`
 - **Требования:** NVIDIA драйверы версии 550+ для CUDA 12.8
-- **Поддерживаемые GPU:** L40, L40S, RTX 6000 Ada, RTX 5090, RTX 4090
-
+- **Поддерживаемые GPU:** L40, L40S, RTX 6000 Ada, RTX 5090
