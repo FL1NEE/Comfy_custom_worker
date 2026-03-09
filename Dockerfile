@@ -245,7 +245,10 @@ WORKDIR /
 ADD src/extra_model_paths.yaml /comfyui/extra_model_paths.yaml
 
 # Install Python runtime dependencies for the handler
-RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/root/.cache/pip uv pip install runpod requests websocket-client
+RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/root/.cache/pip uv pip install runpod requests websocket-client boto3
+
+# Add watermark image for video overlay
+COPY watermark.png /opt/watermark.png
 
 # Add application code and scripts
 ADD src/start.sh src/optimize_pytorch.py handler.py test_input.json ./

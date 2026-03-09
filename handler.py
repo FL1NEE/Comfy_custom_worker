@@ -1,5 +1,4 @@
 import runpod
-from runpod.serverless.utils import rp_upload
 import json
 import urllib.request
 import urllib.parse
@@ -13,6 +12,9 @@ import uuid
 import tempfile
 import socket
 import traceback
+import subprocess
+import boto3
+from botocore.config import Config as BotoConfig
 
 # Time to wait between API check attempts in milliseconds
 COMFY_API_AVAILABLE_INTERVAL_MS = 50
@@ -38,6 +40,27 @@ COMFY_HOST = "127.0.0.1:8188"
 # Enforce a clean state after each job is done
 # see https://docs.runpod.io/docs/handler-additional-controls#refresh-worker
 REFRESH_WORKER = os.environ.get("REFRESH_WORKER", "false").lower() == "true"
+
+# ---------------------------------------------------------------------------
+# S3 client (initialized once from environment variables)
+# ---------------------------------------------------------------------------
+_s3_endpoint = os.environ.get("BUCKET_ENDPOINT_URL")
+_s3_access_key = os.environ.get("BUCKET_ACCESS_KEY_ID")
+_s3_secret_key = os.environ.get("BUCKET_SECRET_ACCESS_KEY")
+S3_BUCKET_NAME = os.environ.get("BUCKET_NAME", "comfyui-outputs")
+
+s3_client = None
+if _s3_endpoint and _s3_access_key and _s3_secret_key:
+    s3_client = boto3.client(
+        "s3",
+        endpoint_url=_s3_endpoint,
+        aws_access_key_id=_s3_access_key,
+        aws_secret_access_key=_s3_secret_key,
+        config=BotoConfig(signature_version="s3v4"),
+    )
+    print(f"worker-comfyui - S3 client initialized (endpoint: {_s3_endpoint}, bucket: {S3_BUCKET_NAME})")
+else:
+    print("worker-comfyui - S3 client not initialized (missing BUCKET_ENDPOINT_URL, BUCKET_ACCESS_KEY_ID, or BUCKET_SECRET_ACCESS_KEY)")
 
 # ---------------------------------------------------------------------------
 # Helper: quick reachability probe of ComfyUI HTTP endpoint (port 8188)
@@ -492,30 +515,88 @@ def get_image_data(filename, subfolder, image_type):
         return None
 
 
-def get_volume_path():
+WATERMARK_PATH = "/opt/watermark.png"
+
+
+def apply_watermark(input_path, output_path):
     """
-    Find the available Network Volume path.
-    Checks common mount points in order: /workspace, /runpod-volume, /workplace
+    Overlay a dynamic watermark on a video using ffmpeg.
+
+    The watermark moves between the four corners every 1.25 seconds.
+
+    Args:
+        input_path (str): Path to the input video file.
+        output_path (str): Path to write the watermarked video.
 
     Returns:
-        str: The path to the available volume, or None if no volume is found.
+        bool: True if watermark was applied successfully, False otherwise.
     """
-    volume_paths = ["/workspace", "/runpod-volume", "/workplace"]
-    
-    for volume_path in volume_paths:
-        if os.path.exists(volume_path) and os.path.isdir(volume_path):
-            # Check if it's writable
-            if os.access(volume_path, os.W_OK):
-                print(f"worker-comfyui - Found writable volume at: {volume_path}")
-                return volume_path
-    
-    print(f"worker-comfyui - WARNING: No writable volume found. Checked: {', '.join(volume_paths)}")
-    return None
+    if not os.path.isfile(WATERMARK_PATH):
+        print(f"worker-comfyui - Watermark file not found at {WATERMARK_PATH}, skipping watermark")
+        return False
+
+    interval = 1.25
+    opacity = 0.6
+    scale_factor = 0.08
+
+    x_expr = (
+        f"if(eq(mod(floor(t/{interval:.2f}),4),0),15,"
+        f"if(eq(mod(floor(t/{interval:.2f}),4),1),W-w-15,"
+        f"if(eq(mod(floor(t/{interval:.2f}),4),2),W-w-15,"
+        f"15)))"
+    )
+    y_expr = (
+        f"if(eq(mod(floor(t/{interval:.2f}),4),0),15,"
+        f"if(eq(mod(floor(t/{interval:.2f}),4),1),15,"
+        f"if(eq(mod(floor(t/{interval:.2f}),4),2),H-h-15,"
+        f"H-h-15)))"
+    )
+
+    filter_complex = (
+        f"[1:v]scale=-1:ih*{scale_factor:.2f},format=rgba,"
+        f"colorchannelmixer=aa={opacity}[wm];"
+        f"[0:v][wm]overlay=x='{x_expr}':y='{y_expr}':shortest=1[outv]"
+    )
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-loop", "1",
+        "-i", WATERMARK_PATH,
+        "-f", "lavfi",
+        "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+        "-filter_complex", filter_complex,
+        "-map", "[outv]",
+        "-map", "2:a",
+        "-c:v", "libx264",
+        "-preset", "faster",
+        "-crf", "22",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-pix_fmt", "yuv420p",
+        "-shortest",
+        output_path,
+    ]
+
+    print(f"worker-comfyui - Applying watermark: {input_path} -> {output_path}")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0:
+            print(f"worker-comfyui - FFmpeg watermark failed (exit {result.returncode}): {result.stderr[-500:]}")
+            return False
+        print(f"worker-comfyui - Watermark applied successfully")
+        return True
+    except subprocess.TimeoutExpired:
+        print(f"worker-comfyui - FFmpeg watermark timed out after 300s")
+        return False
+    except Exception as e:
+        print(f"worker-comfyui - Error applying watermark: {e}")
+        return False
 
 
-def save_video_to_volume(video_bytes, filename, job_id):
+def upload_video_to_s3(video_bytes, filename, job_id):
     """
-    Save video file to Network Volume and return relative path.
+    Apply watermark and upload video to S3.
 
     Args:
         video_bytes (bytes): The video file data.
@@ -523,35 +604,61 @@ def save_video_to_volume(video_bytes, filename, job_id):
         job_id (str): The job ID for organizing files.
 
     Returns:
-        str: Relative path to the saved video (e.g., "outputs/{job_id}/{filename}"), or None if save failed.
+        str: The S3 key of the uploaded video (e.g. "outputs/{job_id}/{filename}").
+
+    Raises:
+        RuntimeError: If S3 client is not configured or upload fails.
     """
-    volume_path = get_volume_path()
-    if not volume_path:
-        return None
-    
-    # Create outputs directory structure in volume
-    outputs_dir = os.path.join(volume_path, "outputs", job_id)
-    
+    if not s3_client:
+        raise RuntimeError(
+            "S3 client not configured. Set BUCKET_ENDPOINT_URL, BUCKET_ACCESS_KEY_ID, BUCKET_SECRET_ACCESS_KEY."
+        )
+
+    # Apply watermark before uploading
+    ext = os.path.splitext(filename)[1].lower()
+    tmp_in_path = None
+    tmp_out_path = None
     try:
-        # Create directory if it doesn't exist
-        os.makedirs(outputs_dir, exist_ok=True)
-        
-        # Save video file
-        video_path = os.path.join(outputs_dir, filename)
-        with open(video_path, "wb") as f:
-            f.write(video_bytes)
-        
-        # Calculate relative path (relative to volume root)
-        relative_path = os.path.join("outputs", job_id, filename).replace("\\", "/")
-        
-        print(f"worker-comfyui - Saved video to volume: {video_path}")
-        print(f"worker-comfyui - Relative path: {relative_path}")
-        
-        return relative_path
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp_in:
+            tmp_in.write(video_bytes)
+            tmp_in_path = tmp_in.name
+
+        tmp_out_path = tmp_in_path + "_wm" + ext
+        if apply_watermark(tmp_in_path, tmp_out_path):
+            with open(tmp_out_path, "rb") as f:
+                video_bytes = f.read()
+            print(f"worker-comfyui - Using watermarked video ({len(video_bytes)} bytes)")
+        else:
+            print(f"worker-comfyui - Proceeding without watermark")
     except Exception as e:
-        print(f"worker-comfyui - Error saving video to volume: {e}")
-        print(traceback.format_exc())
-        return None
+        print(f"worker-comfyui - Watermark step failed, proceeding with original: {e}")
+    finally:
+        for p in [tmp_in_path, tmp_out_path]:
+            if p and os.path.exists(p):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+
+    s3_key = f"outputs/{job_id}/{filename}"
+    content_types = {
+        ".mp4": "video/mp4",
+        ".webm": "video/webm",
+        ".avi": "video/x-msvideo",
+        ".mov": "video/quicktime",
+        ".mkv": "video/x-matroska",
+    }
+    content_type = content_types.get(ext, "application/octet-stream")
+
+    s3_client.put_object(
+        Bucket=S3_BUCKET_NAME,
+        Key=s3_key,
+        Body=video_bytes,
+        ContentType=content_type,
+    )
+
+    print(f"worker-comfyui - Uploaded video to S3: {S3_BUCKET_NAME}/{s3_key}")
+    return s3_key
 
 
 def handler(job):
@@ -771,108 +878,28 @@ def handler(job):
                         errors.append(warn_msg)
                         continue
 
-                    # Check if this is a video file (.mp4, .webm, etc.)
-                    file_extension = os.path.splitext(filename)[1].lower() if filename else ".png"
-                    is_video = file_extension in [".mp4", ".webm", ".avi", ".mov", ".mkv"]
-                    
-                    if is_video:
-                        print(f"worker-comfyui - Processing video file: {filename} (type: {img_type})")
-                    
-                    # Use get_image_data for both images and videos (ComfyUI /view endpoint supports both)
-                    image_bytes = get_image_data(filename, subfolder, img_type)
+                    print(f"worker-comfyui - Processing video file: {filename} (type: {img_type})")
 
-                    if image_bytes:
-                        if not file_extension:
-                            file_extension = ".png" if not is_video else ".mp4"
+                    video_bytes = get_image_data(filename, subfolder, img_type)
 
-                        if os.environ.get("BUCKET_ENDPOINT_URL"):
-                            try:
-                                with tempfile.NamedTemporaryFile(
-                                    suffix=file_extension, delete=False
-                                ) as temp_file:
-                                    temp_file.write(image_bytes)
-                                    temp_file_path = temp_file.name
-                                print(
-                                    f"worker-comfyui - Wrote image bytes to temporary file: {temp_file_path}"
-                                )
-
-                                print(f"worker-comfyui - Uploading {filename} to S3...")
-                                s3_url = rp_upload.upload_image(job_id, temp_file_path)
-                                os.remove(temp_file_path)  # Clean up temp file
-                                print(
-                                    f"worker-comfyui - Uploaded {filename} to S3: {s3_url}"
-                                )
-                                # Append dictionary with filename and URL
-                                output_data.append(
-                                    {
-                                        "filename": filename,
-                                        "type": "s3_url",
-                                        "data": s3_url,
-                                    }
-                                )
-                            except Exception as e:
-                                error_msg = f"Error uploading {filename} to S3: {e}"
-                                print(f"worker-comfyui - {error_msg}")
-                                errors.append(error_msg)
-                                if "temp_file_path" in locals() and os.path.exists(
-                                    temp_file_path
-                                ):
-                                    try:
-                                        os.remove(temp_file_path)
-                                    except OSError as rm_err:
-                                        print(
-                                            f"worker-comfyui - Error removing temp file {temp_file_path}: {rm_err}"
-                                        )
-                        elif is_video:
-                            # For video files: save to Volume and return relative path
-                            print(f"worker-comfyui - Saving video {filename} to Volume...")
-                            volume_path = save_video_to_volume(image_bytes, filename, job_id)
-                            if volume_path:
-                                output_data.append(
-                                    {
-                                        "filename": filename,
-                                        "type": "volume_path",
-                                        "data": volume_path,
-                                    }
-                                )
-                                print(f"worker-comfyui - Video saved to Volume: {volume_path}")
-                            else:
-                                error_msg = f"Failed to save video {filename} to Volume. Volume may not be mounted or accessible."
-                                print(f"worker-comfyui - {error_msg}")
-                                errors.append(error_msg)
-                        else:
-                            # For non-video files: return as base64 string
-                            try:
-                                base64_image = base64.b64encode(image_bytes).decode(
-                                    "utf-8"
-                                )
-                                # Append dictionary with filename and base64 data
-                                output_data.append(
-                                    {
-                                        "filename": filename,
-                                        "type": "base64",
-                                        "data": base64_image,
-                                    }
-                                )
-                                print(f"worker-comfyui - Encoded {filename} as base64")
-                            except Exception as e:
-                                error_msg = f"Error encoding {filename} to base64: {e}"
-                                print(f"worker-comfyui - {error_msg}")
-                                errors.append(error_msg)
+                    if video_bytes:
+                        try:
+                            s3_key = upload_video_to_s3(video_bytes, filename, job_id)
+                            output_data.append(
+                                {
+                                    "filename": filename,
+                                    "type": "path",
+                                    "data": s3_key,
+                                }
+                            )
+                            print(f"worker-comfyui - Video uploaded: {s3_key}")
+                        except Exception as e:
+                            error_msg = f"Failed to upload video {filename} to S3: {e}"
+                            print(f"worker-comfyui - {error_msg}")
+                            errors.append(error_msg)
                     else:
-                        error_msg = f"Failed to fetch image data for {filename} from /view endpoint."
+                        error_msg = f"Failed to fetch video data for {filename} from /view endpoint."
                         errors.append(error_msg)
-
-            # Check for other output types
-            other_keys = [k for k in node_output.keys() if k != "images"]
-            if other_keys:
-                warn_msg = (
-                    f"Node {node_id} produced unhandled output keys: {other_keys}."
-                )
-                print(f"worker-comfyui - WARNING: {warn_msg}")
-                print(
-                    f"worker-comfyui - --> If this output is useful, please consider opening an issue on GitHub to discuss adding support."
-                )
 
     except websocket.WebSocketException as e:
         print(f"worker-comfyui - WebSocket Error: {e}")
