@@ -25,7 +25,7 @@ ENV TRITON_CACHE_DIR=/tmp/triton_cache
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
+    git ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
 # uv (runpod image has pip but not uv)
@@ -33,7 +33,7 @@ RUN pip install uv && uv --version
 
 # ComfyUI (install into existing venv, skip PyTorch — already in base image)
 RUN pip install comfy-cli \
-    && /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --skip-torch-check --nvidia
+    && /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --nvidia
 
 # sageattention — BEFORE custom nodes so it doesn't rebuild on node changes
 RUN if [ "$SKIP_SAGEATTENTION" != "true" ]; then \
