@@ -17,42 +17,29 @@ fi
 log "worker-comfyui: Setting ComfyUI-Manager network mode to offline"
 comfy-manager-set-mode offline || echo "worker-comfyui - Could not set ComfyUI-Manager network_mode" >&2
 
-# Copy custom_nodes from Network Volume if available
-log "worker-comfyui: Checking for custom_nodes on mounted volumes"
-VOLUME_NODES_COPIED=false
-if [ -d "/workspace/ComfyUI/custom_nodes" ] && [ "$(ls -A /workspace/ComfyUI/custom_nodes 2>/dev/null)" ]; then
-    log "worker-comfyui: Copying from /workspace/ComfyUI/custom_nodes"
-    mkdir -p /comfyui/custom_nodes
-    cp -rn /workspace/ComfyUI/custom_nodes/* /comfyui/custom_nodes/ 2>/dev/null || true
-    VOLUME_NODES_COPIED=true
-elif [ -d "/runpod-volume/ComfyUI/custom_nodes" ] && [ "$(ls -A /runpod-volume/ComfyUI/custom_nodes 2>/dev/null)" ]; then
-    log "worker-comfyui: Copying from /runpod-volume/ComfyUI/custom_nodes"
-    mkdir -p /comfyui/custom_nodes
-    cp -rn /runpod-volume/ComfyUI/custom_nodes/* /comfyui/custom_nodes/ 2>/dev/null || true
-    VOLUME_NODES_COPIED=true
-elif [ -d "/workplace/ComfyUI/custom_nodes" ] && [ "$(ls -A /workplace/ComfyUI/custom_nodes 2>/dev/null)" ]; then
-    log "worker-comfyui: Copying from /workplace/ComfyUI/custom_nodes"
-    mkdir -p /comfyui/custom_nodes
-    cp -rn /workplace/ComfyUI/custom_nodes/* /comfyui/custom_nodes/ 2>/dev/null || true
-    VOLUME_NODES_COPIED=true
-elif [ -d "/workspace/custom_nodes" ] && [ "$(ls -A /workspace/custom_nodes 2>/dev/null)" ]; then
-    log "worker-comfyui: Copying from /workspace/custom_nodes"
-    mkdir -p /comfyui/custom_nodes
-    cp -rn /workspace/custom_nodes/* /comfyui/custom_nodes/ 2>/dev/null || true
-    VOLUME_NODES_COPIED=true
-else
-    log "worker-comfyui: No custom_nodes found in Network Volume, using nodes from image"
-fi
+# Symlink models from Network Volume if available
+log "worker-comfyui: Checking for models on mounted volumes"
+VOLUME_MODELS_DIR=""
+for candidate in /workspace/models /runpod-volume/models /workplace/models; do
+    if [ -d "$candidate" ] && [ "$(ls -A "$candidate" 2>/dev/null)" ]; then
+        VOLUME_MODELS_DIR="$candidate"
+        break
+    fi
+done
 
-# Install dependencies for custom_nodes if they were copied from volume
-if [ "$VOLUME_NODES_COPIED" = true ]; then
-    log "worker-comfyui: Installing dependencies for copied custom_nodes"
-    cd /comfyui && \
-    find custom_nodes -maxdepth 2 -name "requirements.txt" -type f 2>/dev/null | while read req; do
-        log "worker-comfyui: pip install -r ${req}"
-        uv pip install -r "$req" || true
+if [ -n "$VOLUME_MODELS_DIR" ]; then
+    log "worker-comfyui: Symlinking models from ${VOLUME_MODELS_DIR}"
+    for subdir in "$VOLUME_MODELS_DIR"/*/; do
+        [ -d "$subdir" ] || continue
+        name="$(basename "$subdir")"
+        target="/comfyui/models/${name}"
+        # Remove existing dir/link so we can replace with symlink
+        rm -rf "$target"
+        ln -sfn "$subdir" "$target"
+        log "worker-comfyui:   ${target} -> ${subdir}"
     done
-    cd /
+else
+    log "worker-comfyui: No models found on Network Volume, using models from image"
 fi
 
 # Inventory custom nodes to aid debugging

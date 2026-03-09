@@ -241,11 +241,9 @@ RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/root/.c
 # Go back to the root
 WORKDIR /
 
-# Support for the network volume
-ADD src/extra_model_paths.yaml /comfyui/extra_model_paths.yaml
-
 # Install Python runtime dependencies for the handler
-RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/root/.cache/pip uv pip install runpod requests websocket-client boto3
+COPY requirements.txt /tmp/requirements.txt
+RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/root/.cache/pip uv pip install -r /tmp/requirements.txt && rm /tmp/requirements.txt
 
 # Add watermark image for video overlay
 COPY watermark.png /opt/watermark.png
@@ -284,11 +282,4 @@ COPY --from=downloader /comfyui/models /comfyui/models
 # These should already be copied in base stage, but we verify
 WORKDIR /
 
-# Set the default command to run when starting the container
-# Install sageattention at runtime if not already installed during build
-# CFLAGS, CPATH, and TORCH_CUDA_ARCH_LIST are already set globally via ENV above
-# CRITICAL: TORCH_CUDA_ARCH_LIST must include:
-# - 8.9 for Ada Lovelace (L40, L40S, RTX 6000 Ada, RTX 4090)
-# - 12.0 for Blackwell (RTX 5090)
-# Use --no-build-isolation for consistency with build-time installation
-CMD ["bash", "-c", "export TORCH_CUDA_ARCH_LIST=\"${TORCH_CUDA_ARCH_LIST:-8.0;8.6;8.9;12.0}\" && export TRITON_CACHE_DIR=/tmp/triton_cache && echo \"Runtime sageattention install: compiling for ${TORCH_CUDA_ARCH_LIST}\" && (uv pip install --no-cache-dir sageattention==2.2.0 --no-build-isolation || pip install --no-cache-dir sageattention==2.2.0 --no-build-isolation || python3 -m pip install --no-cache-dir sageattention==2.2.0 --no-build-isolation || echo \"Warning: sageattention installation failed, continuing anyway...\") && /start.sh"]
+CMD ["/start.sh"]
