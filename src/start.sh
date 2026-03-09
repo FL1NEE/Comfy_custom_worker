@@ -86,12 +86,6 @@ export PYTORCH_ENABLE_MPS_FALLBACK=0  # Disable MPS (we're using CUDA)
 export TORCH_CUDNN_BENCHMARK=1        # Enable cuDNN autotuning
 export TORCH_CUDNN_DETERMINISTIC=0    # Allow non-deterministic algorithms (faster)
 
-# Apply runtime PyTorch optimizations (TF32, cuDNN benchmark, memory settings)
-if [ -f "/optimize_pytorch.py" ]; then
-    log "worker-comfyui: Applying PyTorch performance optimizations for RTX 4090"
-    python /optimize_pytorch.py || log "worker-comfyui: Warning - PyTorch optimization script failed"
-fi
-
 # Note: LowVRAM mode is often enabled automatically by models
 # If you have 24GB+ VRAM (RTX 4090), consider disabling lowVRAM in workflow settings
 

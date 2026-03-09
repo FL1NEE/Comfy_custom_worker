@@ -1,9 +1,10 @@
-ARG BASE_IMAGE=nvidia/cuda:12.8.0-cudnn-devel-ubuntu24.04
+ARG BASE_IMAGE=runpod/pytorch:1.0.3-cu1281-torch271-ubuntu2404
 
 FROM ${BASE_IMAGE}
 
 ARG COMFYUI_VERSION=latest
-ARG CUDA_VERSION_FOR_COMFY
+ARG SKIP_SAGEATTENTION=false
+ARG TORCH_CUDA_ARCH_LIST="8.9"
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PIP_PREFER_BINARY=1
@@ -11,68 +12,41 @@ ENV PYTHONUNBUFFERED=1
 ENV CMAKE_BUILD_PARALLEL_LEVEL=8
 ENV PIP_NO_INPUT=1
 
-# PyTorch/CUDA runtime optimizations
 ENV PYTORCH_ALLOC_CONF=max_split_size_mb:512
 ENV TORCH_COMPILE_DEBUG=0
 ENV TORCH_CUDNN_BENCHMARK=1
 ENV CUDA_LAUNCH_BLOCKING=0
 ENV MALLOC_ARENA_MAX=2
 
-# Python headers for native compilation
-ENV CFLAGS="-I/usr/include/python3.12"
-ENV CPATH="/usr/include/python3.12"
-ENV PYTHON_INCLUDE_DIR="/usr/include/python3.12"
-
-# Compile CUDA kernels only for target GPU (Ada Lovelace: L40, L40S, RTX 4090)
-ARG TORCH_CUDA_ARCH_LIST="8.9"
 ENV TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}
 ENV TRITON_CACHE_DIR=/tmp/triton_cache
 
-# System dependencies
+# Extra system deps not in runpod base
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
-    python3.12 python3.12-venv python3.12-dev \
-    git wget ffmpeg build-essential \
-    libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
-    && ln -sf /usr/bin/python3.12 /usr/bin/python \
-    && ln -sf /usr/bin/pip3 /usr/bin/pip \
+    ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
-# uv + venv
-RUN wget -qO- https://astral.sh/uv/install.sh | sh \
-    && ln -s /root/.local/bin/uv /usr/local/bin/uv \
-    && ln -s /root/.local/bin/uvx /usr/local/bin/uvx \
-    && uv venv /opt/venv
-ENV PATH="/opt/venv/bin:${PATH}"
+# uv (runpod image has pip but not uv)
+RUN pip install uv && uv --version
 
-# ComfyUI
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=cache,target=/root/.cache/pip \
-    uv pip install comfy-cli pip setuptools wheel
-
-RUN if [ -n "${CUDA_VERSION_FOR_COMFY}" ]; then \
-      /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --cuda-version "${CUDA_VERSION_FOR_COMFY}" --nvidia; \
-    else \
-      /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --nvidia; \
-    fi
+# ComfyUI (install into existing venv, skip PyTorch — already in base image)
+RUN pip install comfy-cli \
+    && /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --skip-torch-check --nvidia
 
 # sageattention — BEFORE custom nodes so it doesn't rebuild on node changes
-ARG SKIP_SAGEATTENTION=false
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=cache,target=/root/.cache/pip \
-    if [ "$SKIP_SAGEATTENTION" != "true" ]; then \
-      timeout 1200 uv pip install sageattention==2.2.0 --no-build-isolation || \
+RUN if [ "$SKIP_SAGEATTENTION" != "true" ]; then \
+      timeout 1200 pip install sageattention==2.2.0 --no-build-isolation || \
       echo "sageattention installation failed, continuing without it"; \
     fi
 
 WORKDIR /comfyui
 
-# Custom nodes install script
 COPY scripts/comfy-node-install.sh /usr/local/bin/comfy-node-install
 RUN sed -i 's/\r$//' /usr/local/bin/comfy-node-install && chmod +x /usr/local/bin/comfy-node-install
 
-# Custom nodes (registry) — single RUN to reduce layers
+# All custom nodes in one layer
 RUN comfy-node-install \
     ComfyLiterals \
     comfyui-detail-daemon \
@@ -130,20 +104,16 @@ RUN comfy-node-install \
     && if [ -d "havocscall_custom_nodes" ] && [ ! -d "comfyui_HavocsCall_Custom_Nodes" ]; then mv havocscall_custom_nodes comfyui_HavocsCall_Custom_Nodes; fi \
     && if [ -d "teacache" ] && [ ! -d "ComfyUI-TeaCache" ]; then mv teacache ComfyUI-TeaCache; fi
 
-# Project custom nodes + their deps (changes here DON'T rebuild anything above)
+# Project custom nodes + their deps
 COPY --chown=root:root custom_nodes custom_nodes
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=cache,target=/root/.cache/pip \
-    find custom_nodes -name "requirements.txt" -type f 2>/dev/null | \
-      xargs -I {} uv pip install -r {} || true
+RUN find custom_nodes -name "requirements.txt" -type f 2>/dev/null | \
+      xargs -I {} pip install -r {} || true
 
 WORKDIR /
 
 # Handler dependencies
 COPY requirements.txt /tmp/requirements.txt
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=cache,target=/root/.cache/pip \
-    uv pip install -r /tmp/requirements.txt && rm /tmp/requirements.txt
+RUN pip install -r /tmp/requirements.txt && rm /tmp/requirements.txt
 
 # Application files (most frequently changed — last for max cache hits)
 COPY watermark.png /opt/watermark.png
