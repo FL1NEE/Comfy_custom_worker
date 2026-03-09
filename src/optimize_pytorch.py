@@ -1,64 +1,49 @@
-#!/usr/bin/env python3
-"""
-PyTorch Performance Optimization Script for RTX 4090 and High-End GPUs
-This script applies runtime optimizations to improve inference speed by 50-70%
-"""
-import os
+# -*- coding: utf-8 -*-
 import torch
 
-def optimize_pytorch_for_rtx4090():
-    """Apply PyTorch optimizations for RTX 4090 (24GB VRAM) and similar high-end GPUs"""
-    
+
+def _log(msg: str) -> None:
+    print(f"optimize_pytorch: {msg}", flush=True)
+
+
+def apply() -> None:
     if not torch.cuda.is_available():
-        print("CUDA not available, skipping optimizations")
+        _log("CUDA not available — skipping")
         return
-    
-    device = torch.device('cuda')
-    gpu_props = torch.cuda.get_device_properties(0)
-    gpu_mem_gb = gpu_props.total_memory / (1024 ** 3)
-    gpu_name = gpu_props.name
-    
-    print(f"GPU detected: {gpu_name} ({gpu_mem_gb:.1f}GB VRAM)")
-    
-    # Enable TF32 for Ada Lovelace (RTX 4090) and newer - 2-3x faster with minimal accuracy loss
-    if hasattr(torch.backends.cuda.matmul, 'allow_tf32'):
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-        print("✓ Enabled TF32 (TensorFloat-32) for faster inference")
-    
-    # Enable cuDNN benchmark for algorithm autotuning (faster convolutions)
+
+    props = torch.cuda.get_device_properties(0)
+    vram_gb: float = props.total_memory / (1024 ** 3)
+    gpu_name: str = props.name
+    sm_major: int = props.major
+    sm_minor: int = props.minor
+    compute: str = f"sm_{sm_major}{sm_minor}"
+
+    _log(f"GPU: {gpu_name} | VRAM: {vram_gb:.1f} GB | Compute: {compute}")
+
+    # TF32 — быстрее matmul с минимальной потерей точности (Ampere+, работает на Blackwell)
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    _log("TF32 enabled (matmul + cuDNN)")
+
+    # cuDNN autotuning — выбирает быстрейший алгоритм под фиксированный размер входа
     torch.backends.cudnn.benchmark = True
-    torch.backends.cudnn.deterministic = False  # Allow non-deterministic (faster) algorithms
-    print("✓ Enabled cuDNN benchmark and non-deterministic algorithms")
-    
-    # Optimize CUDA memory allocation
-    # Larger max_split_size_mb reduces fragmentation and improves performance
-    # Note: PYTORCH_CUDA_ALLOC_CONF is deprecated, using PYTORCH_ALLOC_CONF instead
-    if gpu_mem_gb >= 20:  # RTX 4090, 3090, etc.
-        os.environ['PYTORCH_ALLOC_CONF'] = 'max_split_size_mb:512'
-        print("✓ Set CUDA memory allocation: max_split_size_mb=512")
-    
-    # Disable blocking for async execution
-    os.environ['CUDA_LAUNCH_BLOCKING'] = '0'
-    print("✓ Disabled CUDA blocking for async execution")
-    
-    # Clear cache before processing
+    torch.backends.cudnn.deterministic = False
+    _log("cuDNN benchmark enabled")
+
+    # Flash Attention (если собрано в данном билде PyTorch)
+    if hasattr(torch.backends.cuda, "enable_flash_sdp"):
+        torch.backends.cuda.enable_flash_sdp(True)
+        _log("Flash SDP enabled")
+
+    # BF16 нативный формат на Blackwell (sm_100) — особенно важно для Wan Q8
+    if sm_major >= 8 and hasattr(torch.backends.cuda, "matmul"):
+        if hasattr(torch.backends.cuda.matmul, "allow_bf16_reduced_precision_reduction"):
+            torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = True
+            _log("BF16 reduced precision reduction enabled")
+
     torch.cuda.empty_cache()
-    print("✓ Cleared GPU cache")
-    
-    # Log current settings
-    print(f"\nPyTorch optimization complete!")
-    print(f"  - TF32: {torch.backends.cuda.matmul.allow_tf32 if hasattr(torch.backends.cuda.matmul, 'allow_tf32') else 'N/A'}")
-    print(f"  - cuDNN Benchmark: {torch.backends.cudnn.benchmark}")
-    print(f"  - cuDNN Deterministic: {torch.backends.cudnn.deterministic}")
-    
-    # Note about lowVRAM
-    if gpu_mem_gb >= 20:
-        print(f"\n💡 TIP: With {gpu_mem_gb:.1f}GB VRAM, consider disabling lowVRAM mode in your workflow")
-        print("   LowVRAM mode loads models partially, which is much slower.")
-        print("   For RTX 4090, use regular model loaders (not LowVRAM variants) if possible.")
+    _log(f"Done — optimizations applied for {gpu_name}")
 
 
 if __name__ == "__main__":
-    optimize_pytorch_for_rtx4090()
-
+    apply()

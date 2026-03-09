@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import runpod
 import json
 import urllib.parse
@@ -15,25 +16,25 @@ import subprocess
 import boto3
 from botocore.config import Config as BotoConfig
 
-COMFY_API_AVAILABLE_INTERVAL_MS = 50
-COMFY_API_AVAILABLE_MAX_RETRIES = 500
+COMFY_API_AVAILABLE_INTERVAL_MS: int = 50
+COMFY_API_AVAILABLE_MAX_RETRIES: int = 500
 WEBSOCKET_RECONNECT_ATTEMPTS = int(os.environ.get("WEBSOCKET_RECONNECT_ATTEMPTS", 5))
 WEBSOCKET_RECONNECT_DELAY_S = int(os.environ.get("WEBSOCKET_RECONNECT_DELAY_S", 3))
-COMFY_HOST = "127.0.0.1:8188"
-REFRESH_WORKER = os.environ.get("REFRESH_WORKER", "false").lower() == "true"
-WATERMARK_PATH = "/opt/watermark.png"
+COMFY_HOST: str = "127.0.0.1:8188"
+REFRESH_WORKER: bool = os.environ.get("REFRESH_WORKER", "false").lower() == "true"
+WATERMARK_PATH: str = "/opt/watermark.png"
 
 if os.environ.get("WEBSOCKET_TRACE", "false").lower() == "true":
     websocket.enableTrace(True)
 
 # S3 client
-_s3_endpoint = os.environ.get("BUCKET_ENDPOINT_URL")
-_s3_access_key = os.environ.get("BUCKET_ACCESS_KEY_ID")
-_s3_secret_key = os.environ.get("BUCKET_SECRET_ACCESS_KEY")
-S3_BUCKET_NAME = os.environ.get("BUCKET_NAME", "comfyui-outputs")
+_s3_endpoint: str = os.environ.get("BUCKET_ENDPOINT_URL")
+_s3_access_key: str = os.environ.get("BUCKET_ACCESS_KEY_ID")
+_s3_secret_key: str = os.environ.get("BUCKET_SECRET_ACCESS_KEY")
+S3_BUCKET_NAME: str = os.environ.get("BUCKET_NAME", "comfyui-outputs")
 
-s3_client = None
-if _s3_endpoint and _s3_access_key and _s3_secret_key:
+s3_client: boto3.client = None
+if _s3_endpoint is not None and _s3_access_key is not None and _s3_secret_key is not None:
     s3_client = boto3.client(
         "s3",
         endpoint_url=_s3_endpoint,
@@ -48,7 +49,7 @@ else:
 
 def _comfy_server_status():
     try:
-        resp = requests.get(f"http://{COMFY_HOST}/", timeout=5)
+        resp: requests.Response = requests.get(f"http://{COMFY_HOST}/", timeout=5)
         return {"reachable": resp.status_code == 200, "status_code": resp.status_code}
     except Exception as exc:
         return {"reachable": False, "error": str(exc)}

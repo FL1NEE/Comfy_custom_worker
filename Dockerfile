@@ -3,16 +3,20 @@ ARG BASE_IMAGE=runpod/pytorch:1.0.3-cu1281-torch271-ubuntu2404
 FROM ${BASE_IMAGE}
 
 ARG COMFYUI_VERSION=latest
-ARG SKIP_SAGEATTENTION=false
-ARG TORCH_CUDA_ARCH_LIST="8.9"
+ARG SKIP_SAGEATTENTION=true
+# Blackwell (RTX 5090) = sm_100; sm_90 для Hopper-совместимости
+ARG TORCH_CUDA_ARCH_LIST="9.0;10.0"
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PIP_PREFER_BINARY=1
 ENV PYTHONUNBUFFERED=1
 ENV CMAKE_BUILD_PARALLEL_LEVEL=8
 ENV PIP_NO_INPUT=1
+ENV PIP_NO_CACHE_DIR=1
 
-ENV PYTORCH_ALLOC_CONF=max_split_size_mb:512
+# expandable_segments лучше для генеративных моделей с переменным размером тензоров
+# max_split_size_mb убран — он был под 24GB 4090, на 32GB+ только мешает
+ENV PYTORCH_ALLOC_CONF=expandable_segments:True
 ENV TORCH_COMPILE_DEBUG=0
 ENV TORCH_CUDNN_BENCHMARK=1
 ENV CUDA_LAUNCH_BLOCKING=0
@@ -21,24 +25,26 @@ ENV MALLOC_ARENA_MAX=2
 ENV TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}
 ENV TRITON_CACHE_DIR=/tmp/triton_cache
 
-# Extra system deps not in runpod base
+# Системные зависимости
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     git ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
-# uv (runpod image has pip but not uv)
-RUN pip install uv && uv --version
+RUN pip install --no-cache-dir uv && uv --version
 
-# ComfyUI (install into existing venv, skip PyTorch — already in base image)
-RUN pip install comfy-cli \
-    && /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --nvidia
+# ComfyUI (PyTorch уже в base image — не переустанавливаем)
+RUN pip install --no-cache-dir comfy-cli \
+    && /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --nvidia \
+    && pip cache purge 2>/dev/null || true
 
-# sageattention — BEFORE custom nodes so it doesn't rebuild on node changes
+# sageattention — по умолчанию выключен (нестабилен на Blackwell sm_100)
+# Включить: --build-arg SKIP_SAGEATTENTION=false
 RUN if [ "$SKIP_SAGEATTENTION" != "true" ]; then \
-      timeout 1200 pip install sageattention==2.2.0 --no-build-isolation || \
-      echo "sageattention installation failed, continuing without it"; \
+      timeout 1200 pip install --no-cache-dir sageattention==2.2.0 --no-build-isolation \
+      && pip cache purge 2>/dev/null || true \
+      || echo "sageattention installation failed, continuing without it"; \
     fi
 
 WORKDIR /comfyui
@@ -46,7 +52,7 @@ WORKDIR /comfyui
 COPY scripts/comfy-node-install.sh /usr/local/bin/comfy-node-install
 RUN sed -i 's/\r$//' /usr/local/bin/comfy-node-install && chmod +x /usr/local/bin/comfy-node-install
 
-# All custom nodes in one layer
+# Все кастомные ноды в одном слое + чистка мусора в том же слое
 RUN comfy-node-install \
     ComfyLiterals \
     comfyui-detail-daemon \
@@ -102,24 +108,31 @@ RUN comfy-node-install \
     && if [ -d "comfyui_ultimatesdupscale" ] && [ ! -d "ComfyUI_UltimateSDUpscale" ]; then mv comfyui_ultimatesdupscale ComfyUI_UltimateSDUpscale; fi \
     && if [ -d "comfyui_essentials" ] && [ ! -d "ComfyUI_essentials" ]; then mv comfyui_essentials ComfyUI_essentials; fi \
     && if [ -d "havocscall_custom_nodes" ] && [ ! -d "comfyui_HavocsCall_Custom_Nodes" ]; then mv havocscall_custom_nodes comfyui_HavocsCall_Custom_Nodes; fi \
-    && if [ -d "teacache" ] && [ ! -d "ComfyUI-TeaCache" ]; then mv teacache ComfyUI-TeaCache; fi
+    && if [ -d "teacache" ] && [ ! -d "ComfyUI-TeaCache" ]; then mv teacache ComfyUI-TeaCache; fi \
+    && find /comfyui/custom_nodes -name ".git" -type d -exec rm -rf {} + 2>/dev/null || true \
+    && find /comfyui/custom_nodes -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true \
+    && find /comfyui/custom_nodes -name "*.pyc" -delete 2>/dev/null || true \
+    && pip cache purge 2>/dev/null || true
 
-# Project custom nodes + their deps
+# Кастомные ноды проекта + их зависимости
 COPY --chown=root:root custom_nodes custom_nodes
 RUN find custom_nodes -name "requirements.txt" -type f 2>/dev/null | \
-      xargs -I {} pip install -r {} || true
+      xargs -I {} pip install --no-cache-dir -r {} \
+    && pip cache purge 2>/dev/null || true
 
 WORKDIR /
 
-# Handler dependencies
+# Зависимости handler'а
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install -r /tmp/requirements.txt && rm /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt \
+    && pip cache purge 2>/dev/null || true
 
-# Application files (most frequently changed — last for max cache hits)
+# Файлы приложения (меняются чаще всего — последний слой для максимального cache hit)
 COPY watermark.png /opt/watermark.png
 COPY scripts/comfy-manager-set-mode.sh /usr/local/bin/comfy-manager-set-mode
 RUN sed -i 's/\r$//' /usr/local/bin/comfy-manager-set-mode && chmod +x /usr/local/bin/comfy-manager-set-mode
-ADD src/start.sh src/optimize_pytorch.py handler.py test_input.json ./
-RUN sed -i 's/\r$//' /start.sh && chmod +x /start.sh && chmod +x /optimize_pytorch.py
+COPY src/start.sh src/optimize_pytorch.py handler.py ./
+RUN sed -i 's/\r$//' /start.sh && chmod +x /start.sh
 
 CMD ["/start.sh"]
