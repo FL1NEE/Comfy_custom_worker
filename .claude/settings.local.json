@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Убери пожалуйста Co-Authored-By и тд)"
+    ]
+  }
+}
