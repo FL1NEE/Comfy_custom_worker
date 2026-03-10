@@ -359,8 +359,11 @@ def upload_video_to_s3(video_bytes: bytes, filename: str, job_id: str) -> str:
 
 
 def handler(job: dict) -> dict:
-    job_input: Any = job["input"]
-    job_id: str = job["id"]
+    job_id: str = job.get("id", "UNKNOWN")
+    print(f"worker-comfyui - handler called: job_id={job_id}, keys={list(job.keys())}", flush=True)
+
+    job_input: Any = job.get("input")
+    print(f"worker-comfyui - input type={type(job_input).__name__}, value_preview={str(job_input)[:200]}", flush=True)
 
     validated_data, error_message = validate_input(job_input)
     if error_message:
