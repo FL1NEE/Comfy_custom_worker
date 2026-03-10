@@ -53,7 +53,6 @@ RUN comfy-node-install \
     comfyui-florence2 \
     comfyui-frame-interpolation \
     ComfyUI-GGUF \
-    ComfyUI-GGUF-FantasyTalking \
     comfyui-impact-pack \
     comfyui-kjnodes \
     ComfyUI-LatentSyncWrapper \
@@ -61,7 +60,6 @@ RUN comfy-node-install \
     ComfyUI-Manager \
     comfyui-rmbg \
     comfyui-segment-anything-2 \
-    ComfyUI-VibeVoice \
     comfyui-videohelpersuite \
     ComfyUI-WanAnimatePreprocess \
     ComfyUI-WanVideoWrapper \
@@ -82,7 +80,6 @@ RUN comfy-node-install \
     mikey_nodes \
     && cd custom_nodes \
     && git clone --depth=1 --no-tags https://github.com/ClownsharkBatwing/RES4LYF.git RES4LYF || true \
-    && comfy-node-install teacache || true \
     && git clone --depth=1 --no-tags https://github.com/chrisgoringe/cg-image-picker.git cg-image-picker || true \
     && comfy-node-install havocscall_custom_nodes || true \
     && git clone --depth=1 --no-tags https://github.com/adieyal/comfyui-dynamicprompts.git comfyui-dynamicprompts || true \
@@ -101,7 +98,6 @@ RUN comfy-node-install \
     && if [ -d "comfyui_ultimatesdupscale" ] && [ ! -d "ComfyUI_UltimateSDUpscale" ]; then mv comfyui_ultimatesdupscale ComfyUI_UltimateSDUpscale; fi \
     && if [ -d "comfyui_essentials" ] && [ ! -d "ComfyUI_essentials" ]; then mv comfyui_essentials ComfyUI_essentials; fi \
     && if [ -d "havocscall_custom_nodes" ] && [ ! -d "comfyui_HavocsCall_Custom_Nodes" ]; then mv havocscall_custom_nodes comfyui_HavocsCall_Custom_Nodes; fi \
-    && if [ -d "teacache" ] && [ ! -d "ComfyUI-TeaCache" ]; then mv teacache ComfyUI-TeaCache; fi \
     && find /comfyui/custom_nodes -name ".git" -type d -exec rm -rf {} + 2>/dev/null || true \
     && find /comfyui/custom_nodes -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true \
     && find /comfyui/custom_nodes -name "*.pyc" -delete 2>/dev/null || true \
