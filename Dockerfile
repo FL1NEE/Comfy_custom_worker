@@ -104,8 +104,9 @@ RUN comfy-node-install \
     && pip cache purge 2>/dev/null || true
 
 COPY --chown=root:root custom_nodes custom_nodes
-RUN find custom_nodes -name "requirements.txt" -type f 2>/dev/null | \
-      xargs -I {} pip install --no-cache-dir -r {} \
+RUN find /comfyui/custom_nodes -maxdepth 1 -mindepth 1 -type d -empty -delete 2>/dev/null || true \
+    && find /comfyui/custom_nodes -name "requirements.txt" -type f 2>/dev/null | \
+         xargs -I {} pip install --no-cache-dir -r {} \
     && pip cache purge 2>/dev/null || true
 
 WORKDIR /
