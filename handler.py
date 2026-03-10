@@ -353,6 +353,7 @@ def upload_video_to_s3(video_bytes: bytes, filename: str, job_id: str) -> str:
         Key=s3_key,
         Body=video_bytes,
         ContentType=content_types.get(ext, "application/octet-stream"),
+        ACL="public-read",
     )
     print(f"worker-comfyui - Uploaded to S3: {S3_BUCKET_NAME}/{s3_key}")
     return s3_key
@@ -575,8 +576,6 @@ if __name__ == "__main__":
                 return jobs
             return None
 
-    # Must patch rp_scale.get_job (not rp_job.get_job) because JobScaler.__init__
-    # looks up 'get_job' from rp_scale module globals (imported via `from .rp_job import get_job`)
-    _rp_scale.get_job = _debug_get_job
+    _rp_job.get_job = _debug_get_job
 
     runpod.serverless.start({"handler": handler})
