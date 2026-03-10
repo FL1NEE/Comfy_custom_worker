@@ -530,6 +530,7 @@ if __name__ == "__main__":
     # Reduce job-poll interval: patch JobScaler to use a 10s client-side timeout
     # instead of the default 90s, so empty-queue long-polls retry every ~10s.
     import runpod.serverless.modules.rp_scale as _rp_scale
+    import runpod.serverless.modules.rp_job as _rp_job
 
     _orig_scaler_init = _rp_scale.JobScaler.__init__
 
@@ -538,5 +539,42 @@ if __name__ == "__main__":
         self.jobs_fetcher_timeout = int(os.environ.get("RUNPOD_POLL_TIMEOUT_S", 10))
 
     _rp_scale.JobScaler.__init__ = _fast_scaler_init
+
+    # Debug patch: log raw job-take API response to diagnose "missing field" errors
+    _orig_get_job = _rp_job.get_job
+
+    async def _debug_get_job(session, num_jobs=1):
+        url = _rp_job._job_get_url(num_jobs)
+        from runpod.http_client import TooManyRequests
+        async with session.get(url) as response:
+            status = response.status
+            print(f"worker-comfyui - job-take: status={status} content_type={response.content_type} content_length={response.content_length}", flush=True)
+            if status == 204:
+                return None
+            if status == 400:
+                return None
+            if status == 429:
+                raise TooManyRequests(response.request_info, response.history, status=status, message=response.reason)
+            response.raise_for_status()
+            if response.content_type != "application/json":
+                return None
+            if response.content_length == 0:
+                return None
+            try:
+                jobs = await response.json()
+                print(f"worker-comfyui - job-take response: type={type(jobs).__name__} keys={list(jobs.keys()) if isinstance(jobs, dict) else f'list[{len(jobs)}]'} preview={str(jobs)[:200]}", flush=True)
+            except Exception as e:
+                print(f"worker-comfyui - job-take json error: {e}", flush=True)
+                return None
+            if isinstance(jobs, dict):
+                if "id" not in jobs or "input" not in jobs:
+                    print(f"worker-comfyui - job-take BAD DICT keys={list(jobs.keys())}", flush=True)
+                    return None  # skip instead of crashing the poll loop
+                return [jobs]
+            if isinstance(jobs, list):
+                return jobs
+            return None
+
+    _rp_job.get_job = _debug_get_job
 
     runpod.serverless.start({"handler": handler})
