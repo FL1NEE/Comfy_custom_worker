@@ -575,6 +575,8 @@ if __name__ == "__main__":
                 return jobs
             return None
 
-    _rp_job.get_job = _debug_get_job
+    # Must patch rp_scale.get_job (not rp_job.get_job) because JobScaler.__init__
+    # looks up 'get_job' from rp_scale module globals (imported via `from .rp_job import get_job`)
+    _rp_scale.get_job = _debug_get_job
 
     runpod.serverless.start({"handler": handler})
