@@ -527,4 +527,16 @@ def handler(job: dict) -> dict:
 
 
 if __name__ == "__main__":
+    # Reduce job-poll interval: patch JobScaler to use a 10s client-side timeout
+    # instead of the default 90s, so empty-queue long-polls retry every ~10s.
+    import runpod.serverless.modules.rp_scale as _rp_scale
+
+    _orig_scaler_init = _rp_scale.JobScaler.__init__
+
+    def _fast_scaler_init(self, config):
+        _orig_scaler_init(self, config)
+        self.jobs_fetcher_timeout = int(os.environ.get("RUNPOD_POLL_TIMEOUT_S", 10))
+
+    _rp_scale.JobScaler.__init__ = _fast_scaler_init
+
     runpod.serverless.start({"handler": handler})
