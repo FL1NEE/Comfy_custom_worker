@@ -15,7 +15,15 @@ import socket
 import traceback
 import subprocess
 import boto3
+
+import cv2
+import numpy as np
+from PIL import Image, ImageFile
+
 from botocore.config import Config as BotoConfig
+from ultralytics import YOLO
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 COMFY_API_AVAILABLE_INTERVAL_MS: int = 50
 COMFY_API_AVAILABLE_MAX_RETRIES: int = 500
@@ -25,6 +33,10 @@ JOB_TIMEOUT_S: int = int(os.environ.get("JOB_TIMEOUT_S", 3600))
 COMFY_HOST: str = "127.0.0.1:8188"
 REFRESH_WORKER: bool = os.environ.get("REFRESH_WORKER", "false").lower() == "true"
 WATERMARK_PATH: str = "/opt/watermark.png"
+
+PERSON_DETECTOR = YOLO("/runpod-volume/yolov8n.pt")
+PERSON_CLASSIFIER = YOLO("/runpod-volume/best.pt")
+
 
 if os.environ.get("WEBSOCKET_TRACE", "false").lower() == "true":
     websocket.enableTrace(True)
@@ -55,6 +67,61 @@ def _comfy_server_status() -> dict:
         return {"reachable": resp.status_code == 200, "status_code": resp.status_code}
     except Exception as exc:
         return {"reachable": False, "error": str(exc)}
+
+
+def detect_person(img):
+    results = PERSON_DETECTOR(img)[0]
+    for box in results.boxes:
+        if int(box.cls[0]) == 0:
+            return True
+    return False
+
+def classify_person(img):
+    pred = PERSON_CLASSIFIER(img)[0]
+    cls_id = int(pred.probs.top1)
+    cls_name = pred.names[cls_id]
+    return cls_name
+
+
+def check_image_yolo(image_bytes: bytes) -> tuple[str, str]:
+    """Decode image bytes and run YOLO person detection + classification.
+
+    Returns (status, reason):
+      - ("ok", cls_name)      – adult, proceed
+      - ("reject", reason)    – no_person | child
+      - ("error", message)    – decoding or inference failure
+    """
+    try:
+        img_array = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+    except Exception:
+        img = None
+
+    if img is None:
+        try:
+            pil_img = Image.open(BytesIO(image_bytes)).convert("RGB")
+            img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+            print("worker-comfyui - Decoded image via Pillow fallback")
+        except Exception as e:
+            return "error", f"invalid_image: {e}"
+
+    try:
+        is_person = detect_person(img)
+    except Exception as e:
+        return "error", f"person_detection_failed: {e}"
+
+    if not is_person:
+        return "reject", "no_person"
+
+    try:
+        cls_name = classify_person(img)
+    except Exception as e:
+        return "error", f"classification_failed: {e}"
+
+    if cls_name == "child":
+        return "reject", "child"
+
+    return "ok", cls_name
 
 
 def _attempt_websocket_reconnect(
@@ -377,6 +444,24 @@ def handler(job: dict) -> dict:
         return {"error": f"ComfyUI server ({COMFY_HOST}) not reachable after multiple retries."}
 
     if input_images:
+        for image in input_images:
+            name: str = image.get("name", "unknown")
+            image_data_uri: str = image["image"]
+            base64_data: str = image_data_uri.split(",", 1)[1] if "," in image_data_uri else image_data_uri
+            image_bytes: bytes = base64.b64decode(base64_data)
+
+            print(f"worker-comfyui - YOLO check: {name}")
+            status, reason = check_image_yolo(image_bytes)
+            if status == "reject":
+                msg = "На фото нет человека" if reason == "no_person" else "Обнаружен ребёнок — запрещено"
+                print(f"worker-comfyui - Image rejected ({reason}): {name}")
+                return {"error": "Image rejected", "reason": reason, "message": msg}
+            elif status == "error":
+                print(f"worker-comfyui - YOLO check error for {name}: {reason}")
+                return {"error": "Image check failed", "reason": reason}
+
+            print(f"worker-comfyui - YOLO check passed ({reason}): {name}")
+
         upload_result: dict = upload_images(input_images)
         if upload_result["status"] == "error":
             return {"error": "Failed to upload input images", "details": upload_result["details"]}
