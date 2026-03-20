@@ -13,10 +13,19 @@ on:
       - requirements.txt
       - custom_nodes/**
       - watermark.png
+  workflow_run:
+    workflows: ["Build Base Image"]
+    types:
+      - completed
+    branches:
+      - master
+      - feature/optimized-rewrite
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # При триггере workflow_run — собираем только если base успешно собрался
+    if: ${{ github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
     permissions:
       contents: read
       packages: write
@@ -56,5 +65,7 @@ jobs:
           file: Dockerfile
           push: true
           tags: ghcr.io/${{ steps.repo.outputs.name }}:${{ steps.tag.outputs.tag }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/${{ steps.repo.outputs.name }}:base-latest
           cache-from: type=registry,ref=ghcr.io/${{ steps.repo.outputs.name }}:app-buildcache
           cache-to: type=registry,ref=ghcr.io/${{ steps.repo.outputs.name }}:app-buildcache,mode=max
