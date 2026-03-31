@@ -1,0 +1,11 @@
+kornia
+librosa
+imageio
+torchcodec
+google-generativeai
+av
+stable-ts
+demucs
+transformers
+accelerate
+huggingface_hub
