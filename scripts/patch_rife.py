@@ -19,18 +19,18 @@ class _RIFEInterpolationCompat:
     @classmethod
     def INPUT_TYPES(s):
         from vfi_models.rife import RIFE_VFI
-        t = RIFE_VFI.INPUT_TYPES(s)
+        t = RIFE_VFI.INPUT_TYPES()
         req = t.get("required", {})
         opt = t.get("optional", {})
-        frames = req.pop("frames", ("IMAGE",))
+        req.pop("frames", None)
         opt.update(req)
-        return {"required": {"frames": frames}, "optional": opt}
+        return {"required": {"images": ("IMAGE",)}, "optional": opt}
 
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "vfi"
     CATEGORY = "ComfyUI-Frame-Interpolation/VFI"
 
-    def vfi(self, frames, **kwargs):
+    def vfi(self, images, **kwargs):
         from vfi_models.rife import RIFE_VFI
         node = RIFE_VFI()
         kw = {
@@ -44,7 +44,7 @@ class _RIFEInterpolationCompat:
             "torch_compile": False,
         }
         kw.update(kwargs)
-        return node.vfi(frames=frames, **kw)
+        return node.vfi(frames=images, **kw)
 
 NODE_CLASS_MAPPINGS["RIFEInterpolation"] = _RIFEInterpolationCompat
 """
