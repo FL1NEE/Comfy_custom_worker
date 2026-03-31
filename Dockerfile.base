@@ -90,11 +90,14 @@ RUN comfy-node-install \
     && git clone --depth=1 --no-tags https://github.com/chrisgoringe/cg-image-picker.git cg-image-picker || true \
     && comfy-node-install havocscall_custom_nodes || true \
     && git clone --depth=1 --no-tags https://github.com/adieyal/comfyui-dynamicprompts.git comfyui-dynamicprompts || true \
+    && git clone --depth=1 --no-tags https://github.com/vrgamegirl19/comfyui-vrgamedevgirl.git comfyui-vrgamedevgirl || true \
+    && git clone --depth=1 --no-tags https://github.com/princepainter/ComfyUI-PainterI2Vadvanced.git ComfyUI-PainterI2Vadvanced || true \
     && cd /comfyui/custom_nodes \
     && if [ -d "comfyui-detail-daemon" ] && [ ! -d "ComfyUI-Detail-Daemon" ]; then mv comfyui-detail-daemon ComfyUI-Detail-Daemon; fi \
     && if [ -d "comfyui-easy-use" ] && [ ! -d "ComfyUI-Easy-Use" ]; then mv comfyui-easy-use ComfyUI-Easy-Use; fi \
     && if [ -d "comfyui-florence2" ] && [ ! -d "ComfyUI-Florence2" ]; then mv comfyui-florence2 ComfyUI-Florence2; fi \
     && if [ -d "comfyui-frame-interpolation" ] && [ ! -d "ComfyUI-Frame-Interpolation" ]; then mv comfyui-frame-interpolation ComfyUI-Frame-Interpolation; fi \
+    && sed -i '/"RIFE VFI": RIFE_VFI,/a\    "RIFEInterpolation": RIFE_VFI,' /comfyui/custom_nodes/ComfyUI-Frame-Interpolation/__init__.py \
     && if [ -d "comfyui-impact-pack" ] && [ ! -d "ComfyUI-Impact-Pack" ]; then mv comfyui-impact-pack ComfyUI-Impact-Pack; fi \
     && if [ -d "comfyui-kjnodes" ] && [ ! -d "ComfyUI-KJNodes" ]; then mv comfyui-kjnodes ComfyUI-KJNodes; fi \
     && if [ -d "comfyui-logic" ] && [ ! -d "ComfyUI-Logic" ]; then mv comfyui-logic ComfyUI-Logic; fi \
