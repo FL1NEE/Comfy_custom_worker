@@ -97,7 +97,6 @@ RUN comfy-node-install \
     && if [ -d "comfyui-easy-use" ] && [ ! -d "ComfyUI-Easy-Use" ]; then mv comfyui-easy-use ComfyUI-Easy-Use; fi \
     && if [ -d "comfyui-florence2" ] && [ ! -d "ComfyUI-Florence2" ]; then mv comfyui-florence2 ComfyUI-Florence2; fi \
     && if [ -d "comfyui-frame-interpolation" ] && [ ! -d "ComfyUI-Frame-Interpolation" ]; then mv comfyui-frame-interpolation ComfyUI-Frame-Interpolation; fi \
-    && python3 -c "f='/comfyui/custom_nodes/ComfyUI-Frame-Interpolation/__init__.py'; c=open(f).read(); open(f,'a').write('\nNODE_CLASS_MAPPINGS[\"RIFEInterpolation\"] = NODE_CLASS_MAPPINGS[\"RIFE VFI\"]\n') if 'RIFEInterpolation' not in c else None" \
     && if [ -d "comfyui-impact-pack" ] && [ ! -d "ComfyUI-Impact-Pack" ]; then mv comfyui-impact-pack ComfyUI-Impact-Pack; fi \
     && if [ -d "comfyui-kjnodes" ] && [ ! -d "ComfyUI-KJNodes" ]; then mv comfyui-kjnodes ComfyUI-KJNodes; fi \
     && if [ -d "comfyui-logic" ] && [ ! -d "ComfyUI-Logic" ]; then mv comfyui-logic ComfyUI-Logic; fi \
