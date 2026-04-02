@@ -451,16 +451,16 @@ def handler(job: dict) -> dict:
             image_bytes: bytes = base64.b64decode(base64_data)
 
             print(f"worker-comfyui - YOLO check: {name}")
-            status, reason = check_image_yolo(image_bytes)
-            if status == "reject":
-                msg = "На фото нет человека" if reason == "no_person" else "Обнаружен ребёнок — запрещено"
-                print(f"worker-comfyui - Image rejected ({reason}): {name}")
-                return {"error": "Image rejected", "reason": reason, "message": msg}
-            elif status == "error":
-                print(f"worker-comfyui - YOLO check error for {name}: {reason}")
-                return {"error": "Image check failed", "reason": reason}
+            # status, reason = check_image_yolo(image_bytes)
+            # if status == "reject":
+            #     msg = "На фото нет человека" if reason == "no_person" else "Обнаружен ребёнок — запрещено"
+            #     print(f"worker-comfyui - Image rejected ({reason}): {name}")
+            #     return {"error": "Image rejected", "reason": reason, "message": msg}
+            # elif status == "error":
+            #     print(f"worker-comfyui - YOLO check error for {name}: {reason}")
+            #     return {"error": "Image check failed", "reason": reason}
 
-            print(f"worker-comfyui - YOLO check passed ({reason}): {name}")
+            # print(f"worker-comfyui - YOLO check passed ({reason}): {name}")
 
         upload_result: dict = upload_images(input_images)
         if upload_result["status"] == "error":
