@@ -70,7 +70,46 @@ wait_for_server() {
 
 : "${COMFY_LOG_LEVEL:=INFO}"
 
-COMFY_ARGS="--disable-auto-launch --disable-metadata --highvram --verbose ${COMFY_LOG_LEVEL} --log-stdout"
+# Определяем VRAM и SM-версию GPU за один вызов Python
+read -r VRAM_MB SM_VER <<< "$(python3 -c "
+import torch
+if torch.cuda.is_available():
+    p = torch.cuda.get_device_properties(0)
+    vram = int(p.total_memory / 1024 / 1024)
+    sm   = p.major * 10 + p.minor   # 100 = sm_100 (Blackwell), 90 = sm_90 (Hopper), 89 = sm_89 (Ada)
+    print(vram, sm)
+else:
+    print(0, 0)
+" 2>/dev/null || echo "0 0")"
+
+# --- VRAM mode ---
+if [ -z "${COMFY_VRAM_MODE:-}" ]; then
+    # highvram только если VRAM > 40GB — держит всё в GPU без выгрузки
+    # normalvram для 32GB и ниже — text encoder выгружается после кодирования промпта,
+    # освобождая ~10GB перед семплингом (T5/umt5-xxl + два Wan = ~37GB > 32GB без выгрузки)
+    if [ "$VRAM_MB" -ge 40960 ]; then
+        COMFY_VRAM_MODE="highvram"
+    elif [ "$VRAM_MB" -ge 10240 ]; then
+        COMFY_VRAM_MODE="normalvram"
+    else
+        COMFY_VRAM_MODE="lowvram"
+    fi
+    log "worker-comfyui: Auto-detected VRAM=${VRAM_MB}MB SM=${SM_VER} → --${COMFY_VRAM_MODE}"
+else
+    log "worker-comfyui: VRAM mode from env → --${COMFY_VRAM_MODE} (VRAM=${VRAM_MB}MB SM=${SM_VER})"
+fi
+
+# --- PyTorch CUDA allocator ---
+if [ "$VRAM_MB" -ge 20480 ]; then
+    export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,garbage_collection_threshold:0.9"
+elif [ "$VRAM_MB" -ge 10240 ]; then
+    export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,garbage_collection_threshold:0.8,max_split_size_mb:512"
+else
+    export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,garbage_collection_threshold:0.6,max_split_size_mb:256"
+fi
+log "worker-comfyui: PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF}"
+
+COMFY_ARGS="--disable-auto-launch --disable-metadata --${COMFY_VRAM_MODE} --verbose ${COMFY_LOG_LEVEL} --log-stdout"
 
 if [ "${SERVE_API_LOCALLY:-false}" = "true" ]; then
     python -u /comfyui/main.py ${COMFY_ARGS} --listen &
