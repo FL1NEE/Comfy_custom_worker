@@ -16,12 +16,9 @@ import traceback
 import subprocess
 import boto3
 
-import cv2
-import numpy as np
-from PIL import Image, ImageFile
+from PIL import ImageFile
 
 from botocore.config import Config as BotoConfig
-from ultralytics import YOLO
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -33,9 +30,7 @@ JOB_TIMEOUT_S: int = int(os.environ.get("JOB_TIMEOUT_S", 3600))
 COMFY_HOST: str = "127.0.0.1:8188"
 REFRESH_WORKER: bool = os.environ.get("REFRESH_WORKER", "false").lower() == "true"
 WATERMARK_PATH: str = "/opt/watermark.png"
-
-PERSON_DETECTOR = YOLO("/runpod-volume/yolov8n.pt")
-PERSON_CLASSIFIER = YOLO("/runpod-volume/best.pt")
+PERSON_AGE_THRESHOLD: float = 0.47
 
 
 if os.environ.get("WEBSOCKET_TRACE", "false").lower() == "true":
@@ -61,6 +56,29 @@ else:
     print("worker-comfyui - S3 client not initialized (missing BUCKET_ENDPOINT_URL, BUCKET_ACCESS_KEY_ID, or BUCKET_SECRET_ACCESS_KEY)")
 
 
+def filter_image(image: bytes) -> bool:
+    params = {
+      'models': 'face-age',
+      'api_user': os.environ.get("SIGHTENGINE_API_USER", ""),
+      'api_secret': os.environ.get("SIGHTENGINE_API_SECRET", ""),
+    }
+    files = {
+            "media": ("image.jpg", BytesIO(image), "image/jpeg")
+    }
+    output = requests.post('https://api.sightengine.com/1.0/check.json', files=files, data=params).json()
+
+    if output.get("status") == "success":
+        faces = output.get("faces", [])
+        if not faces:
+            return False
+        for face in faces:
+            age_info = face.get("attributes", {}).get("age", {})
+            if age_info.get("minor", 0) > PERSON_AGE_THRESHOLD:
+                return False
+        return True
+
+    return False
+
 def _comfy_server_status() -> dict:
     try:
         resp: requests.Response = requests.get(f"http://{COMFY_HOST}/", timeout=5)
@@ -80,60 +98,6 @@ def _comfy_free_memory() -> None:
     except Exception as e:
         print(f"worker-comfyui - Failed to free ComfyUI memory: {e}", flush=True)
 
-
-def detect_person(img):
-    results = PERSON_DETECTOR(img)[0]
-    for box in results.boxes:
-        if int(box.cls[0]) == 0:
-            return True
-    return False
-
-def classify_person(img):
-    pred = PERSON_CLASSIFIER(img)[0]
-    cls_id = int(pred.probs.top1)
-    cls_name = pred.names[cls_id]
-    return cls_name
-
-
-def check_image_yolo(image_bytes: bytes) -> tuple[str, str]:
-    """Decode image bytes and run YOLO person detection + classification.
-
-    Returns (status, reason):
-      - ("ok", cls_name)      – adult, proceed
-      - ("reject", reason)    – no_person | child
-      - ("error", message)    – decoding or inference failure
-    """
-    try:
-        img_array = np.frombuffer(image_bytes, np.uint8)
-        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-    except Exception:
-        img = None
-
-    if img is None:
-        try:
-            pil_img = Image.open(BytesIO(image_bytes)).convert("RGB")
-            img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-            print("worker-comfyui - Decoded image via Pillow fallback")
-        except Exception as e:
-            return "error", f"invalid_image: {e}"
-
-    try:
-        is_person = detect_person(img)
-    except Exception as e:
-        return "error", f"person_detection_failed: {e}"
-
-    if not is_person:
-        return "reject", "no_person"
-
-    try:
-        cls_name = classify_person(img)
-    except Exception as e:
-        return "error", f"classification_failed: {e}"
-
-    if cls_name == "child":
-        return "reject", "child"
-
-    return "ok", cls_name
 
 
 def _attempt_websocket_reconnect(
@@ -462,17 +426,11 @@ def handler(job: dict) -> dict:
             base64_data: str = image_data_uri.split(",", 1)[1] if "," in image_data_uri else image_data_uri
             image_bytes: bytes = base64.b64decode(base64_data)
 
-            print(f"worker-comfyui - YOLO check: {name}")
-            # status, reason = check_image_yolo(image_bytes)
-            # if status == "reject":
-            #     msg = "На фото нет человека" if reason == "no_person" else "Обнаружен ребёнок — запрещено"
-            #     print(f"worker-comfyui - Image rejected ({reason}): {name}")
-            #     return {"error": "Image rejected", "reason": reason, "message": msg}
-            # elif status == "error":
-            #     print(f"worker-comfyui - YOLO check error for {name}: {reason}")
-            #     return {"error": "Image check failed", "reason": reason}
+            if not filter_image(image_bytes):
+                msg = "На фото нет человека или обнаружен ребёнок — запрещено"
+                print(f"worker-comfyui - Image rejected by filter: {name}")
+                return {"error": "Image rejected", "reason": "reject", "message": msg}
 
-            # print(f"worker-comfyui - YOLO check passed ({reason}): {name}")
 
         upload_result: dict = upload_images(input_images)
         if upload_result["status"] == "error":
