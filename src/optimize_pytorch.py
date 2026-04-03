@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-import gc
-import os
 import torch
 
 
@@ -22,47 +20,28 @@ def apply() -> None:
 
     _log(f"GPU: {gpu_name} | VRAM: {vram_gb:.1f} GB | Compute: {compute}")
 
-    # TF32 — быстрее matmul с минимальной потерей точности (Ampere+)
+    # TF32 — быстрее matmul с минимальной потерей точности (Ampere+, работает на Blackwell)
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     _log("TF32 enabled (matmul + cuDNN)")
 
-    # cuDNN autotuning
+    # cuDNN autotuning — выбирает быстрейший алгоритм под фиксированный размер входа
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.deterministic = False
     _log("cuDNN benchmark enabled")
 
-    # Flash Attention
+    # Flash Attention (если собрано в данном билде PyTorch)
     if hasattr(torch.backends.cuda, "enable_flash_sdp"):
         torch.backends.cuda.enable_flash_sdp(True)
         _log("Flash SDP enabled")
 
-    # Отключаем math SDP и mem-efficient SDP — Flash быстрее и экономнее
-    if hasattr(torch.backends.cuda, "enable_math_sdp"):
-        torch.backends.cuda.enable_math_sdp(False)
-    if hasattr(torch.backends.cuda, "enable_mem_efficient_sdp"):
-        torch.backends.cuda.enable_mem_efficient_sdp(False)
-
-    # BF16 reduced precision (Ampere+ sm_80, Blackwell sm_100)
+    # BF16 нативный формат на Blackwell (sm_100) — особенно важно для Wan Q8
     if sm_major >= 8 and hasattr(torch.backends.cuda, "matmul"):
         if hasattr(torch.backends.cuda.matmul, "allow_bf16_reduced_precision_reduction"):
             torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = True
             _log("BF16 reduced precision reduction enabled")
 
-    # FP16 accumulation reduction (Hopper/Blackwell — sm_90+)
-    if sm_major >= 9 and hasattr(torch.backends.cuda, "matmul"):
-        if hasattr(torch.backends.cuda.matmul, "allow_fp16_reduced_precision_reduction"):
-            torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
-            _log("FP16 reduced precision reduction enabled (sm_90+)")
-
-    # Для видео-генерации важно освободить весь мусор до старта
-    gc.collect()
     torch.cuda.empty_cache()
-    torch.cuda.reset_peak_memory_stats()
-
-    free_b, total_b = torch.cuda.mem_get_info(0)
-    free_gb = free_b / (1024 ** 3)
-    _log(f"VRAM free at startup: {free_gb:.1f} / {vram_gb:.1f} GB")
     _log(f"Done — optimizations applied for {gpu_name}")
 
 

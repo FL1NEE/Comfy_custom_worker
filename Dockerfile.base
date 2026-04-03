@@ -14,10 +14,8 @@ ENV CMAKE_BUILD_PARALLEL_LEVEL=8
 ENV PIP_NO_INPUT=1
 ENV PIP_NO_CACHE_DIR=1
 
-# Базовый fallback — start.sh переопределяет под реальный VRAM после детекции GPU
-ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.8
-# Убираем устаревший PYTORCH_ALLOC_CONF (правильная переменная — PYTORCH_CUDA_ALLOC_CONF)
-ENV PYTORCH_ALLOC_CONF=
+# expandable_segments лучше для генеративных моделей с переменным размером тензоров
+ENV PYTORCH_ALLOC_CONF=expandable_segments:True
 ENV TORCH_COMPILE_DEBUG=0
 ENV TORCH_CUDNN_BENCHMARK=1
 ENV CUDA_LAUNCH_BLOCKING=0

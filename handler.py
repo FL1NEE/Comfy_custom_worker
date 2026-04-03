@@ -87,19 +87,6 @@ def _comfy_server_status() -> dict:
         return {"reachable": False, "error": str(exc)}
 
 
-def _comfy_free_memory() -> None:
-    """Очищает PyTorch CUDA кэш и временные тензоры после каждого job'а.
-    Модели остаются в VRAM — GPU не остывает, следующая генерация не будет холодным стартом.
-    """
-    try:
-        payload: dict = {"unload_models": False, "free_memory": True}
-        requests.post(f"http://{COMFY_HOST}/free", json=payload, timeout=10)
-        print("worker-comfyui - ComfyUI memory freed (models kept in VRAM)", flush=True)
-    except Exception as e:
-        print(f"worker-comfyui - Failed to free ComfyUI memory: {e}", flush=True)
-
-
-
 def _attempt_websocket_reconnect(
     ws_url: str,
     max_attempts: int,
@@ -569,7 +556,6 @@ def handler(job: dict) -> dict:
     finally:
         if ws and ws.connected:
             ws.close()
-        _comfy_free_memory()
 
     if not output_data and errors:
         return {"error": "Job failed", "details": errors}
