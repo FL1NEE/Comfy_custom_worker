@@ -66,7 +66,16 @@ def filter_image(image: bytes) -> bool:
     files = {
             "media": ("image.jpg", BytesIO(image), "image/jpeg")
     }
-    output = requests.post('https://api.sightengine.com/1.0/check.json', files=files, data=params).json()
+
+    try:
+        response = requests.post('https://api.sightengine.com/1.0/check.json', files=files, data=params)
+    except Exception:
+        return True
+
+    if not response.ok:
+        return True
+
+    output = response.json()
 
     if output.get("status") == "success":
         faces = output.get("faces", [])
