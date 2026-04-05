@@ -275,70 +275,71 @@ def get_output_file(filename: str, subfolder: str, file_type: str) -> Optional[b
 
 
 def apply_watermark(input_path: str, output_path: str) -> bool:
-    if not os.path.isfile(WATERMARK_PATH):
-        print(f"worker-comfyui - Watermark not found at {WATERMARK_PATH}, skipping")
-        return False
+    return False
+    # if not os.path.isfile(WATERMARK_PATH):
+    #     print(f"worker-comfyui - Watermark not found at {WATERMARK_PATH}, skipping")
+    #     return False
 
-    interval: float = 1.25
-    opacity: float = 0.6
-    scale_factor: float = 0.08
+    # interval: float = 1.25
+    # opacity: float = 0.6
+    # scale_factor: float = 0.08
 
-    x_expr: str = (
-        f"if(eq(mod(floor(t/{interval:.2f}),4),0),15,"
-        f"if(eq(mod(floor(t/{interval:.2f}),4),1),W-w-15,"
-        f"if(eq(mod(floor(t/{interval:.2f}),4),2),W-w-15,"
-        f"15)))"
-    )
-    y_expr: str = (
-        f"if(eq(mod(floor(t/{interval:.2f}),4),0),15,"
-        f"if(eq(mod(floor(t/{interval:.2f}),4),1),15,"
-        f"if(eq(mod(floor(t/{interval:.2f}),4),2),H-h-15,"
-        f"H-h-15)))"
-    )
+    # x_expr: str = (
+    #     f"if(eq(mod(floor(t/{interval:.2f}),4),0),15,"
+    #     f"if(eq(mod(floor(t/{interval:.2f}),4),1),W-w-15,"
+    #     f"if(eq(mod(floor(t/{interval:.2f}),4),2),W-w-15,"
+    #     f"15)))"
+    # )
+    # y_expr: str = (
+    #     f"if(eq(mod(floor(t/{interval:.2f}),4),0),15,"
+    #     f"if(eq(mod(floor(t/{interval:.2f}),4),1),15,"
+    #     f"if(eq(mod(floor(t/{interval:.2f}),4),2),H-h-15,"
+    #     f"H-h-15)))"
+    # )
 
-    filter_complex: str = (
-        f"[1:v]scale=-1:ih*{scale_factor:.2f},format=rgba,"
-        f"colorchannelmixer=aa={opacity}[wm];"
-        f"[0:v][wm]overlay=x='{x_expr}':y='{y_expr}':shortest=1[outv]"
-    )
+    # filter_complex: str = (
+    #     f"[1:v]scale=-1:ih*{scale_factor:.2f},format=rgba,"
+    #     f"colorchannelmixer=aa={opacity}[wm];"
+    #     f"[0:v][wm]overlay=x='{x_expr}':y='{y_expr}':shortest=1[outv]"
+    # )
 
-    cmd: list = \
-    [
-        "ffmpeg", "-y",
-        "-i", input_path,
-        "-loop", "1",
-        "-i", WATERMARK_PATH,
-        "-f", "lavfi",
-        "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-        "-filter_complex", filter_complex,
-        "-map", "[outv]",
-        "-map", "2:a",
-        "-c:v", "libx264",
-        "-preset", "faster",
-        "-crf", "22",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-pix_fmt", "yuv420p",
-        "-shortest",
-        output_path,
-    ]
+    # cmd: list = \
+    # [
+    #     "ffmpeg", "-y",
+    #     "-i", input_path,
+    #     "-loop", "1",
+    #     "-i", WATERMARK_PATH,
+    #     "-f", "lavfi",
+    #     "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+    #     "-filter_complex", filter_complex,
+    #     "-map", "[outv]",
+    #     "-map", "2:a",
+    #     "-c:v", "libx264",
+    #     "-preset", "faster",
+    #     "-crf", "22",
+    #     "-c:a", "aac",
+    #     "-b:a", "128k",
+    #     "-pix_fmt", "yuv420p",
+    #     "-shortest",
+    #     output_path,
+    # ]
 
-    print(f"worker-comfyui - Applying watermark: {input_path} -> {output_path}")
-    try:
-        result: subprocess.CompletedProcess = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=300
-        )
-        if result.returncode != 0:
-            print(f"worker-comfyui - FFmpeg failed (exit {result.returncode}): {result.stderr[-500:]}")
-            return False
-        print("worker-comfyui - Watermark applied")
-        return True
-    except subprocess.TimeoutExpired:
-        print("worker-comfyui - FFmpeg timed out after 300s")
-        return False
-    except Exception as e:
-        print(f"worker-comfyui - Watermark error: {e}")
-        return False
+    # print(f"worker-comfyui - Applying watermark: {input_path} -> {output_path}")
+    # try:
+    #     result: subprocess.CompletedProcess = subprocess.run(
+    #         cmd, capture_output=True, text=True, timeout=300
+    #     )
+    #     if result.returncode != 0:
+    #         print(f"worker-comfyui - FFmpeg failed (exit {result.returncode}): {result.stderr[-500:]}")
+    #         return False
+    #     print("worker-comfyui - Watermark applied")
+    #     return True
+    # except subprocess.TimeoutExpired:
+    #     print("worker-comfyui - FFmpeg timed out after 300s")
+    #     return False
+    # except Exception as e:
+    #     print(f"worker-comfyui - Watermark error: {e}")
+    #     return False
 
 
 def upload_video_to_s3(video_bytes: bytes, filename: str, job_id: str) -> str:
