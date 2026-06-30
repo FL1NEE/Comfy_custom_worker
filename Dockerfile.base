@@ -92,6 +92,7 @@ RUN comfy-node-install \
     && git clone --depth=1 --no-tags https://github.com/adieyal/comfyui-dynamicprompts.git comfyui-dynamicprompts || true \
     && git clone --depth=1 --no-tags https://github.com/vrgamegirl19/comfyui-vrgamedevgirl.git comfyui-vrgamedevgirl || true \
     && git clone --depth=1 --no-tags https://github.com/princepainter/ComfyUI-PainterI2Vadvanced.git ComfyUI-PainterI2Vadvanced || true \
+    && git clone --depth=1 --no-tags https://github.com/jtydhr88/ComfyUI-qwenmultiangle.git ComfyUI-qwenmultiangle || true \
     && cd /comfyui/custom_nodes \
     && if [ -d "comfyui-detail-daemon" ] && [ ! -d "ComfyUI-Detail-Daemon" ]; then mv comfyui-detail-daemon ComfyUI-Detail-Daemon; fi \
     && if [ -d "comfyui-easy-use" ] && [ ! -d "ComfyUI-Easy-Use" ]; then mv comfyui-easy-use ComfyUI-Easy-Use; fi \
